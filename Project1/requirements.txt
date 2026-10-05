@@ -1,0 +1,8 @@
+fastapi>=0.110
+uvicorn>=0.29
+python-dotenv>=1.0
+langchain-community>=0.2
+langchain-core>=0.2
+langchain-google-genai>=2.0
+langgraph>=0.2
+duckduckgo-search>=6.0

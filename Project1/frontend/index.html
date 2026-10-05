@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>AI Agent — Minimal Chat</title>
+<meta name="description" content="Minimalistic frontend for the Python ReAct AI agent (Gemini + Search + Calculator)." />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet" />
+<link rel="stylesheet" href="./styles.css" />
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' rx='24' fill='%23111'/><text x='50' y='68' font-size='52' text-anchor='middle' fill='white' font-family='Arial'>✦</text></svg>" />
+</head>
+<body>
+<div class="page">
+  <header class="top">
+    <div class="brand">
+      <span class="mark">✦</span>
+      <div>
+        <strong>AI Agent</strong>
+        <span class="sub">ReAct · Gemini + Search + Calculator</span>
+      </div>
+    </div>
+    <div class="status">
+      <span id="dot" class="dot demo"></span>
+      <span id="statusText">demo mode</span>
+      <button id="settingsBtn" class="ghost" type="button" aria-label="Settings">⚙</button>
+    </div>
+  </header>
+
+  <div id="settings" class="settings" hidden>
+    <label>Backend URL
+      <input id="backendUrl" value="http://localhost:8000/api/chat" spellcheck="false" />
+    </label>
+    <p class="hint">Start backend with <code>uvicorn server:app --port 8000</code>. If unreachable, the UI runs in local demo mode.</p>
+    <div class="row">
+      <button id="saveSettings" class="primary sm" type="button">Save</button>
+      <button id="demoBtn" class="ghost sm" type="button">Use demo only</button>
+    </div>
+  </div>
+
+  <div class="tools">
+    <span class="tool"><i>⌕</i> web search</span>
+    <span class="tool"><i>∑</i> calculator</span>
+    <span class="tool"><i>◐</i> ReAct loop</span>
+    <span class="spacer"></span>
+    <button id="clearBtn" class="ghost sm" type="button">Clear</button>
+  </div>
+
+  <main id="chat" class="chat" aria-live="polite"></main>
+
+  <div class="examples">
+    <button type="button" data-ex="What is 24 + 58?">What is 24 + 58?</button>
+    <button type="button" data-ex="Search the web for the latest Gemini model news">Search latest Gemini news</button>
+    <button type="button" data-ex="Explain what a ReAct agent does in 2 sentences">What is a ReAct agent?</button>
+  </div>
+
+  <form id="form" class="composer">
+    <input id="input" placeholder="Message the agent…  (Enter to send)" autocomplete="off" />
+    <button class="primary" type="submit" id="sendBtn">↑</button>
+  </form>
+  <p class="foot">Minimal frontend · connects to <code>Project1/server.py</code> · <span id="modeNote">demo fallback on</span></p>
+</div>
+
+<script src="./app.js"></script>
+</body>
+</html>
