@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="630" viewBox="0 0 1200 630">
+<rect width="1200" height="630" fill="#FAFAFA"/>
+<rect x="80" y="90" width="1040" height="450" rx="28" fill="#FFFFFF" stroke="#E8E8E8" stroke-width="2"/>
+<rect x="130" y="140" width="56" height="56" rx="14" fill="#111111"/>
+<text x="158" y="178" font-family="Arial" font-size="30" fill="#FFFFFF" text-anchor="middle">✦</text>
+<text x="200" y="165" font-family="Arial" font-size="34" font-weight="bold" fill="#111111">AI Agent</text>
+<text x="200" y="190" font-family="Arial" font-size="18" fill="#6B6B6B">ReAct · Gemini + Search + Calculator</text>
+<rect x="130" y="230" width="150" height="36" rx="18" fill="#FFFFFF" stroke="#E8E8E8" stroke-width="2"/>
+<text x="205" y="254" font-family="Arial" font-size="16" fill="#6B6B6B" text-anchor="middle">web search</text>
+<rect x="292" y="230" width="140" height="36" rx="18" fill="#FFFFFF" stroke="#E8E8E8" stroke-width="2"/>
+<text x="362" y="254" font-family="Arial" font-size="16" fill="#6B6B6B" text-anchor="middle">calculator</text>
+<rect x="130" y="290" width="620" height="70" rx="16" fill="#FFFFFF" stroke="#E8E8E8" stroke-width="2"/>
+<text x="150" y="318" font-family="Arial" font-size="18" fill="#111111">The sum of 24 and 58 is 82.</text>
+<text x="150" y="342" font-family="Arial" font-size="14" fill="#6B6B6B">[tool] calculator</text>
+<rect x="470" y="380" width="620" height="56" rx="16" fill="#111111"/>
+<text x="490" y="414" font-family="Arial" font-size="18" fill="#FFFFFF">Search the web for the latest Gemini news</text>
+<text x="80" y="580" font-family="Arial" font-size="16" fill="#6B6B6B">Python · LangGraph · Gemini · FastAPI · Minimal UI — ZIZ12007/AI-AGENTS-PYTHON</text>
+</svg>
