@@ -19,6 +19,17 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: actions/configure-pages@v5
+      # Stamp the assets with the commit SHA. GitHub Pages serves everything
+      # with `cache-control: max-age=600`, so a browser can keep an old
+      # app.js long after a deploy. A unique query string per commit makes
+      # every build fetch the new files straight away.
+      - name: Stamp the assets with the commit SHA
+        run: |
+          sha="${{ github.sha }}"
+          cd Project1/frontend
+          sed -i "s|\"\./app.js\"|\"./app.js?v=$sha\"|" index.html
+          sed -i "s|\"\./styles.css\"|\"./styles.css?v=$sha\"|" index.html
+          grep -E "app.js|styles.css" index.html
       - uses: actions/upload-pages-artifact@v3
         with:
           path: Project1/frontend
