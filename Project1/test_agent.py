@@ -202,6 +202,48 @@ def test_cache() -> None:
     server._CACHE.clear()
 
 
+def test_providers() -> None:
+    """The provider layer picks the right key and the right model chain."""
+    import os
+
+    from agent_core import (
+        PROVIDERS,
+        available_providers,
+        get_model_chain,
+        get_provider,
+        provider_key,
+    )
+
+    saved = {name: os.environ.get(name) for name in ("PROVIDER", "GROQ_API_KEY", "OPENROUTER_API_KEY", "GOOGLE_API_KEY")}
+    try:
+        os.environ["PROVIDER"] = "groq"
+        os.environ["GROQ_API_KEY"] = "test-groq"
+        os.environ["OPENROUTER_API_KEY"] = "test-openrouter"
+        check("an explicit provider wins", get_provider() == "groq", get_provider())
+        check("the provider key is found", provider_key("groq") == "test-groq")
+        check("both providers are available", set(available_providers()) >= {"groq", "openrouter"}, available_providers())
+        check(
+            "the chain starts with the provider model",
+            get_model_chain()[0] == PROVIDERS["groq"]["default"],
+            get_model_chain(),
+        )
+        check("the chain holds several models", len(get_model_chain()) >= 2, get_model_chain())
+
+        os.environ.pop("PROVIDER")
+        os.environ.pop("GOOGLE_API_KEY", None)
+        check(
+            "the first provider with a key wins",
+            get_provider() in ("groq", "openrouter"),
+            get_provider(),
+        )
+    finally:
+        for name, value in saved.items():
+            if value is None:
+                os.environ.pop(name, None)
+            else:
+                os.environ[name] = value
+
+
 def test_api() -> None:
     """POST /api/chat against a stubbed agent (no API key needed)."""
     try:
@@ -371,10 +413,11 @@ def test_stream_endpoint() -> None:
         {name: StreamingFakeAgent() for name in server.get_model_chain()}
     )
     server._agent = server._agents[server.get_model_name()]
+    server._CACHE.clear()
     try:
         with TestClient(server.app) as client:
             with client.stream(
-                "POST", "/api/chat/stream", json={"message": "What is 24 + 58?"}
+                "POST", "/api/chat/stream", json={"message": "stream me a fresh answer"}
             ) as response:
                 body = "".join(response.iter_text())
                 status = response.status_code
@@ -387,9 +430,65 @@ def test_stream_endpoint() -> None:
             "The sum of 24 and 58 is 82." in body,
             body[:200],
         )
+        check(
+            "the stream does not leak internals",
+            "generativelanguage" not in body and "RESOURCE_EXHAUSTED" not in body,
+            body[:200],
+        )
     finally:
         server._agents.clear()
         server._agent = None
+        server._CACHE.clear()
+        os.environ.pop("GOOGLE_API_KEY", None)
+
+
+def test_stream_error_is_sanitised() -> None:
+    """A provider error must never reach the client as raw text."""
+    import server
+
+    class ExplodingAgent:
+        def stream(self, inputs, stream_mode=None):
+            raise Exception(
+                "Error calling model 'gemini-3.5-flash' (RESOURCE_EXHAUSTED): 429 "
+                "RESOURCE_EXHAUSTED: {'error': {'message': 'You exceeded your quota'}}"
+            )
+            yield  # pragma: no cover
+
+    try:
+        from fastapi.testclient import TestClient
+    except ImportError:
+        print("[SKIP] stream error test (pip install httpx to enable it)")
+        return
+
+    import os
+
+    os.environ.setdefault("GOOGLE_API_KEY", "test-key")
+    server._agents.clear()
+    server._agents.update({name: ExplodingAgent() for name in server.get_model_chain()})
+    server._agent = server._agents[server.get_model_name()]
+    server._CACHE.clear()
+    try:
+        with TestClient(server.app) as client:
+            with client.stream(
+                "POST", "/api/chat/stream", json={"message": "explode please"}
+            ) as response:
+                body = "".join(response.iter_text())
+
+        check("the error is reported", "event: error" in body, body[:160])
+        check(
+            "the raw provider error is not sent",
+            "RESOURCE_EXHAUSTED" not in body and "generativelanguage" not in body,
+            body[:200],
+        )
+        check(
+            "the quota message explains the wait",
+            "quota" in body.lower(),
+            body[:200],
+        )
+    finally:
+        server._agents.clear()
+        server._agent = None
+        server._CACHE.clear()
         os.environ.pop("GOOGLE_API_KEY", None)
 
 
@@ -402,6 +501,8 @@ if __name__ == "__main__":
     test_model_fallback()
     test_streaming()
     test_cache()
+    test_providers()
     test_api()
     test_stream_endpoint()
+    test_stream_error_is_sanitised()
     print("\nAll checks passed.")

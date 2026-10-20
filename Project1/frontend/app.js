@@ -130,6 +130,7 @@ function renderHealth(state, data) {
   }
   const rows = [
     ["Backend", backend],
+    ["Provider", data.provider_label || data.provider || "unknown"],
     ["Model", data.model || "unknown"],
     ["Tools", (data.tools || []).join(", ") || "none"],
     ["API key", data.has_key ? "configured" : "missing"],

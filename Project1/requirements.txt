@@ -10,6 +10,9 @@ langchain>=1.0
 langchain-core>=1.6
 langgraph>=1.0,<2.0
 langchain-google-genai>=4.0
+# One integration for every OpenAI-compatible provider (Groq, OpenRouter,
+# Cerebras, GitHub Models, OpenAI itself).
+langchain-openai>=1.0
 
 # --- tools -----------------------------------------------------------------
 # `ddgs` is the current DuckDuckGo client (the old `duckduckgo-search` package

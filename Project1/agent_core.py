@@ -73,14 +73,138 @@ SYSTEM_PROMPT = (
 # Configuration
 # --------------------------------------------------------------------------- #
 def get_api_key() -> str | None:
-    """Return the Gemini API key from the environment (or ``None``)."""
-    key = os.getenv("GOOGLE_API_KEY") or os.getenv("GEMINI_API_KEY")
+    """Return the API key of the active provider (or ``None``)."""
+    key = provider_key(get_provider())
+    if not key:
+        # Fall back to any key that is set, so the app still works when the
+        # provider was chosen by hand and the key sits under another name.
+        for name in PROVIDER_ORDER:
+            key = provider_key(name)
+            if key:
+                break
     return key.strip() if key and key.strip() else None
+
+
+# --------------------------------------------------------------------------- #
+# Providers
+# --------------------------------------------------------------------------- #
+# Groq, OpenRouter, Cerebras and GitHub Models all speak the OpenAI-compatible
+# protocol, so one integration (``langchain-openai``) covers all of them.
+# The first provider with a key is used, unless PROVIDER says otherwise.
+PROVIDERS: dict[str, dict[str, Any]] = {
+    "gemini": {
+        "env": ("GOOGLE_API_KEY", "GEMINI_API_KEY"),
+        "default": "gemini-3.5-flash",
+        "models": (
+            "gemini-3.5-flash",
+            "gemini-3.7-flash",
+            "gemini-3.6-flash",
+            "gemini-3.1-flash-lite",
+            "gemini-3.8-flash",
+        ),
+        "label": "Google Gemini",
+        "url": "https://aistudio.google.com/apikey",
+    },
+    "groq": {
+        "env": ("GROQ_API_KEY",),
+        "base_url": "https://api.groq.com/openai/v1",
+        "default": "llama-3.3-70b-versatile",
+        "models": (
+            "llama-3.3-70b-versatile",
+            "llama-3.1-8b-instant",
+            "openai/gpt-oss-20b",
+        ),
+        "label": "Groq",
+        "url": "https://console.groq.com/keys",
+    },
+    "openrouter": {
+        "env": ("OPENROUTER_API_KEY",),
+        "base_url": "https://openrouter.ai/api/v1",
+        "default": "deepseek/deepseek-chat-v3-0324:free",
+        "models": (
+            "deepseek/deepseek-chat-v3-0324:free",
+            "meta-llama/llama-3.3-70b-instruct:free",
+            "google/gemini-2.0-flash-exp:free",
+            "qwen/qwen3-235b-a22b:free",
+        ),
+        "label": "OpenRouter",
+        "url": "https://openrouter.ai/keys",
+    },
+    "cerebras": {
+        "env": ("CEREBRAS_API_KEY",),
+        "base_url": "https://api.cerebras.ai/v1",
+        "default": "llama-3.3-70b",
+        "models": (
+            "llama-3.3-70b",
+            "llama3.1-8b",
+            "qwen-3-32b",
+        ),
+        "label": "Cerebras",
+        "url": "https://cloud.cerebras.ai",
+    },
+    "github": {
+        "env": ("GITHUB_TOKEN", "GH_TOKEN"),
+        "base_url": "https://models.github.ai/inference",
+        "default": "openai/gpt-4o-mini",
+        "models": (
+            "openai/gpt-4o-mini",
+            "meta/Llama-3.3-70B-Instruct",
+            "mistral-ai/Ministral-8B-Instruct",
+        ),
+        "label": "GitHub Models",
+        "url": "https://github.com/settings/tokens",
+    },
+    "openai": {
+        "env": ("OPENAI_API_KEY",),
+        "default": "gpt-4o-mini",
+        "models": ("gpt-4o-mini", "gpt-4.1-mini"),
+        "label": "OpenAI",
+        "url": "https://platform.openai.com/api-keys",
+    },
+}
+
+# Which provider wins when several keys are present.
+PROVIDER_ORDER = ("groq", "openrouter", "cerebras", "github", "openai", "gemini")
+
+
+def provider_key(provider: str) -> str | None:
+    """The API key configured for a provider, if there is one."""
+    spec = PROVIDERS.get(provider)
+    if not spec:
+        return None
+    for name in spec["env"]:
+        value = os.getenv(name)
+        if value and value.strip():
+            return value.strip()
+    return None
+
+
+def get_provider() -> str:
+    """The provider to use: ``PROVIDER``, or the first one with a key."""
+    configured = (os.getenv("PROVIDER") or "").strip().lower()
+    if configured:
+        return configured
+    for name in PROVIDER_ORDER:
+        if provider_key(name):
+            return name
+    return "gemini"
+
+
+def available_providers() -> list[str]:
+    """The providers that have a key configured."""
+    return [name for name in PROVIDER_ORDER if provider_key(name)]
 
 
 def get_model_name() -> str:
     """Return the Gemini model id to use."""
-    return (os.getenv("GEMINI_MODEL") or DEFAULT_MODEL).strip() or DEFAULT_MODEL
+    provider = get_provider()
+    configured = (os.getenv("AGENT_MODEL") or "").strip()
+    if provider == "gemini":
+        configured = configured or (os.getenv("GEMINI_MODEL") or "").strip()
+    if configured:
+        return configured
+    spec = PROVIDERS.get(provider) or {}
+    return spec.get("default") or DEFAULT_MODEL
 
 
 def get_model_chain() -> list[str]:
@@ -89,10 +213,16 @@ def get_model_chain() -> list[str]:
     The measured-fastest model is put in front of the fallbacks so a normal
     request does not have to walk past the slow ones.
     """
+    provider = get_provider()
+    spec = PROVIDERS.get(provider) or {}
     chain = [get_model_name()]
-    for name in (PREFERRED_MODEL,) + FALLBACK_MODELS:
+    for name in (spec.get("models") or ()):
         if name not in chain:
             chain.append(name)
+    if provider == "gemini":
+        for name in (PREFERRED_MODEL,) + FALLBACK_MODELS:
+            if name not in chain:
+                chain.append(name)
     return chain
 
 
@@ -315,7 +445,41 @@ def build_model(
     model_name: str | None = None,
     reasoning_effort: str | None = None,
 ):
-    """Create the Gemini chat model."""
+    """Create the chat model for the active provider."""
+    provider = get_provider()
+    if provider != "gemini":
+        return _build_openai_compatible(provider, model_name, api_key)
+    return _build_gemini(model_name, api_key, reasoning_effort)
+
+
+def _build_openai_compatible(
+    provider: str,
+    model_name: str | None = None,
+    api_key: str | None = None,
+):
+    """Groq, OpenRouter, Cerebras and GitHub Models, over one integration."""
+    from langchain_openai import ChatOpenAI
+
+    spec = PROVIDERS.get(provider) or {}
+    kwargs: dict[str, Any] = {
+        "model": model_name or spec.get("default") or "",
+        "api_key": api_key or provider_key(provider),
+        "temperature": 0,
+        # A quota error is not worth retrying: the fallback chain is better.
+        "max_retries": 0,
+        "timeout": REQUEST_TIMEOUT,
+    }
+    if spec.get("base_url"):
+        kwargs["base_url"] = spec["base_url"]
+    return ChatOpenAI(**kwargs)
+
+
+def _build_gemini(
+    model_name: str | None = None,
+    api_key: str | None = None,
+    reasoning_effort: str | None = None,
+):
+    """The Gemini model, with the retry storm switched off."""
     from langchain_google_genai import ChatGoogleGenerativeAI
 
     kwargs = {

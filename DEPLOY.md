@@ -99,15 +99,28 @@ pretending everything is fine.
 
 ## What to set in the environment
 
-| Variable | Required | Purpose |
+Any **one** of these keys is enough - the app picks the first provider that has
+a key:
+
+| Variable | Provider | Where to get it |
 | --- | --- | --- |
-| `GOOGLE_API_KEY` | yes | The Gemini key. Without it the API returns `demo: true` |
-| `GEMINI_MODEL` | no | Model id (default `gemini-3.5-flash`, the fastest measured) |
-| `AGENT_TIMEOUT` | no | Seconds per agent run (default `120`) |
-| `MODEL_ATTEMPT_SECONDS` | no | Seconds one model may take before the next is tried (default `15`) |
-| `SLOW_MODEL_SECONDS` | no | A model slower than this is parked (default `8`) |
-| `CACHE_TTL` | no | How long an answer stays cached (default `3600`) |
-| `PORT` | no | Set by the host |
+| `GROQ_API_KEY` | Groq (fastest free) | https://console.groq.com/keys |
+| `OPENROUTER_API_KEY` | OpenRouter (many models) | https://openrouter.ai/keys |
+| `CEREBRAS_API_KEY` | Cerebras | https://cloud.cerebras.ai |
+| `GITHUB_TOKEN` | GitHub Models | https://github.com/settings/tokens |
+| `OPENAI_API_KEY` | OpenAI | https://platform.openai.com/api-keys |
+| `GOOGLE_API_KEY` | Gemini (20 req/day/model) | https://aistudio.google.com/apikey |
+
+Set `PROVIDER=groq` (or any other name above) to force one.
+
+| Other variable | Default | Purpose |
+| --- | --- | --- |
+| `AGENT_MODEL` | per provider | Override the model id |
+| `AGENT_TIMEOUT` | `120` | Seconds per agent run |
+| `MODEL_ATTEMPT_SECONDS` | `15` | Seconds one model may take before the next is tried |
+| `SLOW_MODEL_SECONDS` | `8` | A model slower than this is parked |
+| `CACHE_TTL` | `3600` | How long an answer stays cached |
+| `PORT` | – | Set by the host |
 
 ## Before you deploy
 

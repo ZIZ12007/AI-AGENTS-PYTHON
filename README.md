@@ -168,14 +168,41 @@ cd Project1 && python test_agent.py
 
 | Variable | Default | Purpose |
 | --- | --- | --- |
-| `GOOGLE_API_KEY` / `GEMINI_API_KEY` | – | Gemini API key (required for live answers) |
-| `GEMINI_MODEL` | `gemini-3.5-flash` | Model id used by the agent |
+| `GOOGLE_API_KEY` / `GEMINI_API_KEY` | – | Gemini key |
+| `GROQ_API_KEY` | – | Groq key (fastest free option) |
+| `OPENROUTER_API_KEY` | – | OpenRouter key (one key, many models) |
+| `CEREBRAS_API_KEY` | – | Cerebras key |
+| `GITHUB_TOKEN` | – | GitHub Models key |
+| `OPENAI_API_KEY` | – | OpenAI key |
+| `PROVIDER` | first with a key | Force one: `groq`, `openrouter`, `cerebras`, `github`, `openai`, `gemini` |
+| `AGENT_MODEL` | per provider | Override the model id |
+| `GEMINI_MODEL` | `gemini-3.5-flash` | Model id when the provider is Gemini |
 | `AGENT_TIMEOUT` | `120` | Seconds a single agent run may take |
 | `MODEL_ATTEMPT_SECONDS` | `15` | Seconds one model may take before the next is tried |
 | `SLOW_MODEL_SECONDS` | `8` | A model slower than this is parked for a while |
 | `SLOW_MODEL_COOLDOWN` | `600` | How long a slow model is parked (seconds) |
 | `CACHE_TTL` | `3600` | How long an answer stays cached (seconds) |
 | `PORT` | `8000` | Port used by `python server.py` |
+
+### Providers
+
+The agent is not tied to Gemini. Any provider with an OpenAI-compatible API is
+one integration (`langchain-openai`), so the ReAct loop, the tools, the
+streaming and the cache all work the same:
+
+| Provider | Key | Free tier | Speed |
+| --- | --- | --- | --- |
+| **Groq** | `GROQ_API_KEY` | generous RPM + daily quota | **fastest** (~1s) |
+| **OpenRouter** | `OPENROUTER_API_KEY` | free models (`:free` suffix) | fast |
+| **Cerebras** | `CEREBRAS_API_KEY` | free tier | very fast |
+| **GitHub Models** | `GITHUB_TOKEN` | free with a PAT | fast |
+| **OpenAI** | `OPENAI_API_KEY` | needs billing | fast |
+| **Gemini** | `GOOGLE_API_KEY` | **20 requests/day/model** | 2.5–4s |
+
+> The Gemini free tier is the reason this project felt slow: a ReAct turn
+> costs two requests, so one model answers about ten questions a day.
+> **Groq or OpenRouter removes that ceiling** — drop the key into
+> `Project1/.env` and restart, nothing else changes.
 
 > The free Gemini tier regularly takes 15–30s per model call, and a ReAct turn
 > needs two of them (decide → answer). Keep `AGENT_TIMEOUT` comfortably above

@@ -35,12 +35,16 @@ if str(BASE_DIR) not in sys.path:
 
 from agent_core import (  # noqa: E402  (path setup has to run first)
     MAX_HISTORY_TURNS,
+    PROVIDERS,
+    PROVIDER_ORDER,
+    available_providers,
     build_agent,
     build_model,
     build_search_tool,
     get_api_key,
     get_model_chain,
     get_model_name,
+    get_provider,
     is_model_unavailable_error,
     is_rate_limit_error,
     model_latencies,
@@ -157,9 +161,14 @@ def normalise_history(history: List[ChatTurn] | None) -> list[tuple[str, str]]:
 def health():
     """Lightweight status probe used by Render / the frontend settings panel."""
     search_available = build_search_tool() is not None
+    provider = get_provider()
+    spec = PROVIDERS.get(provider) or {}
     return {
         "ok": True,
         "has_key": bool(get_api_key()),
+        "provider": provider,
+        "provider_label": spec.get("label", provider),
+        "providers_available": available_providers(),
         "model": get_model_name(),
         "model_chain": get_model_chain(),
         "model_latency_ms": {k: int(v * 1000) for k, v in model_latencies().items()},
@@ -183,10 +192,7 @@ async def chat(body: ChatIn):
 
     if not get_api_key():
         return {
-            "reply": (
-                "GOOGLE_API_KEY is missing on the server. Add it to Project1/.env "
-                "(or set it in the host's environment) and restart the backend."
-            ),
+            "reply": _no_key_message(),
             "tools_used": [],
             "demo": True,
         }
@@ -259,7 +265,7 @@ async def chat(body: ChatIn):
             # The details stay in the log; the client only gets a safe summary.
             log.exception("agent run failed")
             return {
-                "reply": "The agent failed while answering. The server log has the details.",
+                "reply": _safe_error_message(exc),
                 "tools_used": [],
                 "demo": False,
                 "error": True,
@@ -293,6 +299,40 @@ async def chat(body: ChatIn):
         "demo": False,
         "error": True,
     }
+
+
+def _no_key_message() -> str:
+    """What to say when no provider key is configured."""
+    options = "\n".join(
+        f"  - {PROVIDERS[name]['label']}: set {PROVIDERS[name]['env'][0]} "
+        f"({PROVIDERS[name]['url']})"
+        for name in PROVIDER_ORDER
+    )
+    return (
+        "No AI provider key is configured on the server. Add one of these to "
+        "Project1/.env (or to the host's environment) and restart:\n"
+        f"{options}\n"
+        "The fastest free option is Groq or OpenRouter."
+    )
+
+
+def _safe_error_message(exc: BaseException) -> str:
+    """A message that is safe to show the client.
+
+    Provider exceptions carry the API endpoint, the quota details and the
+    model id - none of which belong in a chat bubble.
+    """
+    if is_rate_limit_error(exc):
+        return (
+            "The AI provider's free quota is used up for now. It resets later "
+            "today; a different provider or an enabled billing plan avoids the wait."
+        )
+    if is_model_unavailable_error(exc):
+        return (
+            "The AI provider is temporarily overloaded and every model in the "
+            "chain is busy. Try again in a moment."
+        )
+    return "The agent failed while answering. The server log has the details."
 
 
 def _timeout_response() -> dict:
@@ -368,11 +408,7 @@ async def chat_stream(body: ChatIn):
             yield _sse(
                 "done",
                 {
-                    "reply": (
-                        "GOOGLE_API_KEY is missing on the server. Add it to "
-                        "Project1/.env (or set it in the host's environment) "
-                        "and restart the backend."
-                    ),
+                    "reply": _no_key_message(),
                     "tools_used": [],
                     "demo": True,
                 },
@@ -406,8 +442,12 @@ async def chat_stream(body: ChatIn):
         try:
             for kind, *rest in stream_reply_events(agent, message, history):
                 loop.call_soon_threadsafe(queue.put_nowait, (kind, rest))
-        except Exception as exc:  # the client gets an error event
-            loop.call_soon_threadsafe(queue.put_nowait, ("error", [str(exc)]))
+        except Exception as exc:  # the client gets a safe error event
+            # Never send the raw exception: it carries provider URLs, quota
+            # details and the API key. The details stay in the log.
+            log.exception("streaming agent run failed")
+            safe_message = _safe_error_message(exc)
+            loop.call_soon_threadsafe(queue.put_nowait, ("error", [safe_message]))
         finally:
             loop.call_soon_threadsafe(queue.put_nowait, ("end", []))
 
