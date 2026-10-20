@@ -33,12 +33,16 @@ const STATUS = {
   nokey:      { cls: "demo",   text: "no api key",        note: "server has no GOOGLE_API_KEY" },
   offline:    { cls: "offline", text: "backend offline",  note: "backend unreachable" },
   demo:       { cls: "demo",   text: "demo mode",         note: "demo fallback on" },
+  static:     { cls: "demo",   text: "demo mode",         note: "no backend configured - local demo" },
   error:      { cls: "error",  text: "error",             note: "the agent reported an error" },
 };
 
 let backend = normaliseChatUrl(readStored(STORAGE_BACKEND) || defaultBackend());
 let demoOnly = readStored(STORAGE_DEMO_ONLY) === "1";
 let history = [];
+// True once a backend was chosen explicitly (settings panel). A static host
+// with no backend is an expected state, not an outage.
+let backendChosen = Boolean(readStored(STORAGE_BACKEND));
 
 // --- storage (private mode throws, so every access is guarded) -------------
 function readStored(key) {
@@ -57,6 +61,12 @@ function removeStored(key) {
 function configuredBackend() {
   const config = window.AGENT_CONFIG || {};
   return (config.backendUrl || "").trim();
+}
+
+// Is a backend actually expected at this point? A static-only deployment has
+// none, and that is a normal state rather than an outage.
+function hasBackend() {
+  return backendChosen || Boolean(configuredBackend());
 }
 
 // The FastAPI backend serves this very page, so the default is the API on the
@@ -107,7 +117,9 @@ function renderHealth(state, data) {
     note.className = "health-note";
     note.textContent = state === "offline"
       ? `No response from ${backend}.`
-      : "Health details appear once the backend answers.";
+      : state === "static"
+        ? `No backend is configured, so the local demo is used. Set one in config.js or the ⚙ settings.`
+        : "Health details appear once the backend answers.";
     healthInfo.appendChild(note);
     return;
   }
@@ -154,7 +166,9 @@ async function probeHealth() {
     setStatus(data.has_key ? "live" : "nokey", data);
     return data;
   } catch {
-    setStatus("offline", null);
+    // A static host with no backend configured is a normal state, not an
+    // outage - say so instead of showing "backend offline".
+    setStatus(hasBackend() ? "offline" : "static", null);
     return null;
   } finally {
     clearTimeout(timer);
@@ -326,8 +340,13 @@ async function send(text) {
         return;
       }
       // Backend unreachable: say so, then fall back to the local demo.
-      bubble("error", `Backend unreachable at ${backend} - showing a local demo answer.`);
-      setStatus("offline");
+      if (hasBackend()) {
+        bubble("error", `Backend unreachable at ${backend} - showing a local demo answer.`);
+        setStatus("offline");
+      } else {
+        bubble("error", "No backend is configured - showing a local demo answer.");
+        setStatus("static");
+      }
     } else {
       t.remove();
     }
@@ -367,6 +386,7 @@ document.getElementById("saveSettings").addEventListener("click", () => {
   backend = normaliseChatUrl(backendUrl.value.trim());
   backendUrl.value = backend;
   demoOnly = false;
+  backendChosen = true;
   writeStored(STORAGE_BACKEND, backend);
   removeStored(STORAGE_DEMO_ONLY);
   settings.hidden = true;
@@ -385,6 +405,7 @@ resetBtn.addEventListener("click", () => {
   backend = defaultBackend();
   backendUrl.value = backend;
   demoOnly = false;
+  backendChosen = false;
   removeStored(STORAGE_BACKEND);
   removeStored(STORAGE_DEMO_ONLY);
   bubble("agent", `Backend reset to ${backend}.`);
