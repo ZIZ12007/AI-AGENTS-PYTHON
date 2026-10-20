@@ -13,6 +13,7 @@ const backendUrl = document.getElementById("backendUrl");
 const healthInfo = document.getElementById("healthInfo");
 const resetBtn = document.getElementById("resetBtn");
 const counter = document.getElementById("counter");
+const modelSelect = document.getElementById("modelSelect");
 
 // Keep in sync with server.py (MAX_MESSAGE_CHARS / MAX_HISTORY_TURNS).
 const MAX_MESSAGE_CHARS = 4000;
@@ -26,6 +27,7 @@ const HEALTH_TIMEOUT_MS = 8000;
 
 const STORAGE_BACKEND = "agent-backend";
 const STORAGE_DEMO_ONLY = "agent-demo-only";
+const STORAGE_MODEL = "agent-model";
 
 const STATUS = {
   connecting: { cls: "",       text: "connecting…",       note: "checking the backend" },
@@ -43,6 +45,8 @@ let history = [];
 // True once a backend was chosen explicitly (settings panel). A static host
 // with no backend is an expected state, not an outage.
 let backendChosen = Boolean(readStored(STORAGE_BACKEND));
+// The model the user picked in the settings ("" = let the server decide).
+let selectedModel = readStored(STORAGE_MODEL) || "";
 
 // --- storage (private mode throws, so every access is guarded) -------------
 function readStored(key) {
@@ -96,6 +100,49 @@ function healthUrl() {
 // The streaming route sits next to the plain chat route.
 function chatStreamUrl() {
   return normaliseChatUrl(backend).replace(/\/api\/chat$/i, "/api/chat/stream");
+}
+
+// --- model picker ----------------------------------------------------------
+// The server reports every model its keys can reach, grouped by provider.
+function fillModelPicker(models, activeModel) {
+  if (!modelSelect) return;
+  modelSelect.textContent = "";
+
+  const auto = document.createElement("option");
+  auto.value = "";
+  auto.textContent = "Automatic (fastest available)";
+  modelSelect.appendChild(auto);
+
+  const groups = new Map();
+  (models || []).forEach((entry) => {
+    const key = entry.provider_label || entry.provider;
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(entry);
+  });
+
+  groups.forEach((entries, label) => {
+    const group = document.createElement("optgroup");
+    group.label = label;
+    entries.forEach((entry) => {
+      const option = document.createElement("option");
+      option.value = entry.model;
+      option.textContent = entry.model + (entry.default ? "  (default)" : "");
+      group.appendChild(option);
+    });
+    modelSelect.appendChild(group);
+  });
+
+  // Keep the stored choice if it is still offered.
+  const values = Array.from(modelSelect.options).map((option) => option.value);
+  if (selectedModel && values.includes(selectedModel)) {
+    modelSelect.value = selectedModel;
+  } else {
+    selectedModel = "";
+    modelSelect.value = "";
+  }
+  if (activeModel) {
+    modelSelect.title = `The server is currently using ${activeModel}.`;
+  }
 }
 
 // --- status + health -------------------------------------------------------
@@ -169,6 +216,7 @@ async function probeHealth() {
     if (!res.ok) throw new Error("HTTP " + res.status);
     const data = await res.json();
     if (data.timeout_seconds) serverTimeoutSeconds = Number(data.timeout_seconds);
+    fillModelPicker(data.models_available, data.model);
     setStatus(data.has_key ? "live" : "nokey", data);
     return data;
   } catch {
@@ -271,6 +319,7 @@ async function callBackendStreaming(q, onDelta) {
       body: JSON.stringify({
         message: q,
         history: history.slice(-MAX_HISTORY_TURNS),
+        model: selectedModel || undefined,
       }),
       signal: controller.signal,
     });
@@ -354,6 +403,7 @@ async function callBackend(q) {
       body: JSON.stringify({
         message: q,
         history: history.slice(-MAX_HISTORY_TURNS),
+        model: selectedModel || undefined,
       }),
       signal: controller.signal,
     });
@@ -502,12 +552,39 @@ document.getElementById("saveSettings").addEventListener("click", () => {
   backendUrl.value = backend;
   demoOnly = false;
   backendChosen = true;
+  selectedModel = modelSelect ? modelSelect.value : "";
+  if (selectedModel) {
+    writeStored(STORAGE_MODEL, selectedModel);
+  } else {
+    removeStored(STORAGE_MODEL);
+  }
   writeStored(STORAGE_BACKEND, backend);
   removeStored(STORAGE_DEMO_ONLY);
   settings.hidden = true;
-  bubble("agent", `Backend set to ${backend}. Next message will try the live agent.`);
+  bubble(
+    "agent",
+    `Backend set to ${backend}${selectedModel ? `, model ${selectedModel}` : ""}. Next message will try the live agent.`,
+  );
   probeHealth();
 });
+
+// Switching the model applies immediately - no need to press Save.
+if (modelSelect) {
+  modelSelect.addEventListener("change", () => {
+    selectedModel = modelSelect.value;
+    if (selectedModel) {
+      writeStored(STORAGE_MODEL, selectedModel);
+    } else {
+      removeStored(STORAGE_MODEL);
+    }
+    bubble(
+      "agent",
+      selectedModel
+        ? `Model set to ${selectedModel}. The next message will use it.`
+        : "Model set to automatic (the fastest model available).",
+    );
+  });
+}
 
 document.getElementById("demoBtn").addEventListener("click", () => {
   demoOnly = true;
@@ -521,8 +598,11 @@ resetBtn.addEventListener("click", () => {
   backendUrl.value = backend;
   demoOnly = false;
   backendChosen = false;
+  selectedModel = "";
+  if (modelSelect) modelSelect.value = "";
   removeStored(STORAGE_BACKEND);
   removeStored(STORAGE_DEMO_ONLY);
+  removeStored(STORAGE_MODEL);
   bubble("agent", `Backend reset to ${backend}.`);
   probeHealth();
 });

@@ -29,17 +29,6 @@ load_dotenv(dotenv_path=BASE_DIR / ".env")
 # Override with GEMINI_MODEL=... when a different model is preferred.
 DEFAULT_MODEL = "gemini-3.5-flash"
 
-# The Gemini free tier enforces a *per-model* daily quota (20 requests/day
-# for the flash models), so one exhausted model should not take the whole app
-# down. These are tried in order when the primary is rate limited or busy.
-FALLBACK_MODELS = (
-    "gemini-3.5-flash",
-    "gemini-3.7-flash",
-    "gemini-3.6-flash",
-    "gemini-3.1-flash-lite",
-    "gemini-3.8-flash",
-)
-
 # Measured on the free tier: a full ReAct turn (two model calls) takes
 # 2.5-4s on gemini-3.5-flash, while other models regularly take 30-100s.
 # "lite" is not faster here - it is often slower.
@@ -95,6 +84,8 @@ PROVIDERS: dict[str, dict[str, Any]] = {
     "gemini": {
         "env": ("GOOGLE_API_KEY", "GEMINI_API_KEY"),
         "default": "gemini-3.5-flash",
+        # Ordered by measured speed: a full ReAct turn takes 2.5-4s on
+        # gemini-3.5-flash and 30-100s on the others.
         "models": (
             "gemini-3.5-flash",
             "gemini-3.7-flash",
@@ -216,14 +207,36 @@ def get_model_chain() -> list[str]:
     provider = get_provider()
     spec = PROVIDERS.get(provider) or {}
     chain = [get_model_name()]
-    for name in (spec.get("models") or ()):
+    for name in spec.get("models") or ():
         if name not in chain:
             chain.append(name)
-    if provider == "gemini":
-        for name in (PREFERRED_MODEL,) + FALLBACK_MODELS:
-            if name not in chain:
-                chain.append(name)
     return chain
+
+
+def available_models() -> list[dict[str, str]]:
+    """Every model the configured keys can reach, for the model picker."""
+    models: list[dict[str, str]] = []
+    for provider in PROVIDER_ORDER:
+        if not provider_key(provider):
+            continue
+        spec = PROVIDERS[provider]
+        for model in spec.get("models") or ():
+            models.append(
+                {
+                    "provider": provider,
+                    "provider_label": spec.get("label", provider),
+                    "model": model,
+                    "default": model == spec.get("default"),
+                }
+            )
+    return models
+
+
+def model_is_allowed(model: str) -> bool:
+    """True when a model may be requested by the client."""
+    if not model:
+        return False
+    return any(model == entry["model"] for entry in available_models())
 
 
 def is_rate_limit_error(exc: BaseException) -> bool:

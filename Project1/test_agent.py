@@ -244,6 +244,72 @@ def test_providers() -> None:
                 os.environ[name] = value
 
 
+def test_model_selection() -> None:
+    """The client may pick a model, but only one the server can reach."""
+    import os
+
+    from agent_core import available_models, model_is_allowed
+
+    os.environ.setdefault("GOOGLE_API_KEY", "test-key")
+    try:
+        models = available_models()
+        check("the server offers models", len(models) > 0, len(models))
+        check(
+            "the offered models name a provider",
+            all(entry.get("provider") and entry.get("model") for entry in models),
+            models[:2],
+        )
+        first = models[0]["model"]
+        check("a listed model is allowed", model_is_allowed(first))
+        check("an unknown model is not allowed", not model_is_allowed("evil-model-xyz"))
+        check("an empty model is not allowed", not model_is_allowed(""))
+    finally:
+        os.environ.pop("GOOGLE_API_KEY", None)
+
+
+def test_requested_model_is_used() -> None:
+    """A model the client asks for is used; an unknown one is ignored."""
+    try:
+        from fastapi.testclient import TestClient
+    except ImportError:
+        print("[SKIP] model choice test (pip install httpx to enable it)")
+        return
+
+    import os
+
+    import server
+
+    os.environ.setdefault("GOOGLE_API_KEY", "test-key")
+    server._agents.clear()
+    server._agents.update({name: FakeAgent("model") for name in server.get_model_chain()})
+    server._agent = server._agents[server.get_model_name()]
+    server._CACHE.clear()
+    try:
+        with TestClient(server.app) as client:
+            allowed = server.get_model_chain()[1]
+            payload = client.post(
+                "/api/chat",
+                json={"message": "Which model answers this?", "model": allowed},
+            ).json()
+            check("the requested model is used", payload.get("model") == allowed, payload.get("model"))
+
+            payload = client.post(
+                "/api/chat",
+                json={"message": "And this one?", "model": "not-a-real-model"},
+            ).json()
+            check(
+                "an unknown model is ignored",
+                payload.get("model") != "not-a-real-model"
+                and payload.get("model") in server.get_model_chain(),
+                payload.get("model"),
+            )
+    finally:
+        server._agents.clear()
+        server._agent = None
+        server._CACHE.clear()
+        os.environ.pop("GOOGLE_API_KEY", None)
+
+
 def test_api() -> None:
     """POST /api/chat against a stubbed agent (no API key needed)."""
     try:
@@ -268,6 +334,11 @@ def test_api() -> None:
             check("health reports the message limit", health.get("max_message_chars") == 4000)
             check("health reports the history window", health.get("history_turns") == MAX_HISTORY_TURNS)
             check("health reports the model chain", len(health.get("model_chain") or []) >= 1)
+            check(
+                "health lists the models the user can pick",
+                len(health.get("models_available") or []) >= 1,
+                health.get("models_available"),
+            )
 
             payload = client.post(
                 "/api/chat", json={"message": "What is 24 + 58?"}
@@ -502,6 +573,8 @@ if __name__ == "__main__":
     test_streaming()
     test_cache()
     test_providers()
+    test_model_selection()
+    test_requested_model_is_used()
     test_api()
     test_stream_endpoint()
     test_stream_error_is_sanitised()

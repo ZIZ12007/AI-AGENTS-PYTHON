@@ -38,6 +38,7 @@ from agent_core import (  # noqa: E402  (path setup has to run first)
     PROVIDERS,
     PROVIDER_ORDER,
     available_providers,
+    available_models,
     build_agent,
     build_model,
     build_search_tool,
@@ -47,6 +48,7 @@ from agent_core import (  # noqa: E402  (path setup has to run first)
     get_provider,
     is_model_unavailable_error,
     is_rate_limit_error,
+    model_is_allowed,
     model_latencies,
     order_models,
     record_model_latency,
@@ -133,6 +135,9 @@ class ChatIn(BaseModel):
     # Earlier turns so the agent can answer follow-up questions. Optional: a
     # single-message request works exactly as before.
     history: List[ChatTurn] = Field(default_factory=list)
+    # The model the client wants to use. It must be one of the models the
+    # server's keys can reach; anything else is ignored.
+    model: str | None = None
 
 
 # Roles the agent understands. Everything else is dropped.
@@ -171,6 +176,7 @@ def health():
         "providers_available": available_providers(),
         "model": get_model_name(),
         "model_chain": get_model_chain(),
+        "models_available": available_models(),
         "model_latency_ms": {k: int(v * 1000) for k, v in model_latencies().items()},
         "tools": ["calculator"] + (["duckduckgo_search"] if search_available else []),
         "search_available": search_available,
@@ -212,6 +218,11 @@ async def chat(body: ChatIn):
 
     # Fastest known models first, slow ones parked at the end.
     candidates = order_models(get_model_chain())
+
+    # A model the client asked for goes first, so the picker in the UI is
+    # honoured. Unknown models are ignored rather than sent to the provider.
+    if body.model and model_is_allowed(body.model):
+        candidates = [body.model] + [m for m in candidates if m != body.model]
 
     for index, model_name in enumerate(candidates):
         remaining = deadline - time.perf_counter()

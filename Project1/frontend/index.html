@@ -32,7 +32,12 @@
     <label>Backend URL
       <input id="backendUrl" value="/api/chat" spellcheck="false" />
     </label>
-    <p class="hint">Leave it as <code>/api/chat</code> when the backend serves this page (the default). A base URL such as <code>https://your-service.onrender.com</code> also works — the path is added automatically. Start the backend with <code>uvicorn server:app --port 8000</code>.</p>
+    <label>Model
+      <select id="modelSelect">
+        <option value="">Loading models…</option>
+      </select>
+    </label>
+    <p class="hint">Leave the backend as <code>/api/chat</code> when the backend serves this page (the default). A base URL such as <code>https://your-service.onrender.com</code> also works — the path is added automatically. Start the backend with <code>uvicorn server:app --port 8000</code>.</p>
     <div id="healthInfo" class="health"></div>
     <div class="row">
       <button id="saveSettings" class="primary sm" type="button">Save</button>

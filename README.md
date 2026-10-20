@@ -140,6 +140,28 @@ The free Gemini tier is slow and inconsistent, so the server works around it:
 - **Repeat questions are free.** A question that was already answered comes
   from the cache (`CACHE_TTL`, default one hour) - no API call, no waiting.
 
+### Switching models
+
+The ⚙ panel has a **model picker** listing every model the server's keys can
+reach, grouped by provider:
+
+```
+Automatic (fastest available)
+Google Gemini
+  gemini-3.5-flash  (default)
+  gemini-3.7-flash
+  ...
+Groq
+  llama-3.3-70b-versatile  (default)
+  llama-3.1-8b-instant
+  ...
+```
+
+The choice is remembered in the browser and sent with every message
+(`"model": "llama-3.1-8b-instant"`). The server only accepts a model from its
+own list - anything else is ignored, so the endpoint cannot be used to call
+arbitrary models. "Automatic" lets the server pick the fastest model it knows.
+
 ### Model fallback
 
 The Gemini free tier meters **each model separately** (20 requests/day) and

@@ -51,6 +51,18 @@ The ⚙ button sets where the API lives. All of these work:
 **Reset** goes back to the same-origin default. The choice is stored in
 `localStorage`, so it survives a reload.
 
+## Model picker
+
+The ⚙ panel lists every model the server's keys can reach, grouped by
+provider, and the choice is remembered in the browser:
+
+```js
+localStorage.getItem("agent-model");   // "" = automatic
+```
+
+It travels with every request as `"model": "..."` and the server ignores
+anything that is not on its own list.
+
 ## API
 
 - `GET /api/health` → `{ ok, has_key, model, model_chain, model_latency_ms, tools, search_available, agent_ready, timeout_seconds, max_message_chars, history_turns }`
