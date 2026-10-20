@@ -274,18 +274,226 @@ function recordTurn(role, content) {
   }
 }
 
-// --- local demo (mirrors MAIN.PY tools, no key needed) ---
-function demoReply(q) {
-  const m = q.match(/(-?\d+(?:\.\d+)?)\s*\+\s*(-?\d+(?:\.\d+)?)/);
-  if (m) {
-    const a = parseFloat(m[1]), b = parseFloat(m[2]);
-    return { reply: `The sum of ${a} and ${b} is ${a + b}.`, tools: ["calculator"] };
+// --- local demo (mirrors MAIN.PY tools, no key needed) ----------------------
+// The demo is the fallback when no backend is reachable, so it has to be
+// useful on its own: a small, safe arithmetic evaluator (no eval) that
+// handles the same kind of questions the calculator tool does.
+
+const MATH_FUNCTIONS = {
+  sin: (x) => Math.sin((x * Math.PI) / 180),
+  cos: (x) => Math.cos((x * Math.PI) / 180),
+  tan: (x) => Math.tan((x * Math.PI) / 180),
+  asin: (x) => (Math.asin(x) * 180) / Math.PI,
+  acos: (x) => (Math.acos(x) * 180) / Math.PI,
+  atan: (x) => (Math.atan(x) * 180) / Math.PI,
+  sqrt: Math.sqrt,
+  log: Math.log,
+  log10: Math.log10,
+  abs: Math.abs,
+  round: Math.round,
+  floor: Math.floor,
+  ceil: Math.ceil,
+};
+
+const MATH_CONSTANTS = { pi: Math.PI, e: Math.E };
+
+// A tiny recursive-descent parser. It only ever sees the characters this
+// file allows, and it never evaluates a string.
+function evaluateExpression(source) {
+  let index = 0;
+  const text = source;
+
+  const skip = () => {
+    while (index < text.length && /\s/.test(text[index])) index += 1;
+  };
+
+  const parseExpression = () => {
+    let value = parseTerm();
+    for (;;) {
+      skip();
+      const op = text[index];
+      if (op !== "+" && op !== "-") return value;
+      index += 1;
+      const right = parseTerm();
+      value = op === "+" ? value + right : value - right;
+    }
+  };
+
+  const parseTerm = () => {
+    let value = parsePower();
+    for (;;) {
+      skip();
+      const op = text[index];
+      if (op !== "*" && op !== "/" && op !== "%") return value;
+      index += 1;
+      const right = parsePower();
+      if (op === "*") value *= right;
+      else if (op === "/") value /= right;
+      else value %= right;
+    }
+  };
+
+  const parsePower = () => {
+    const base = parseUnary();
+    skip();
+    if (text[index] === "^") {
+      index += 1;
+      return base ** parsePower();
+    }
+    return base;
+  };
+
+  const parseUnary = () => {
+    skip();
+    if (text[index] === "-") {
+      index += 1;
+      return -parseUnary();
+    }
+    if (text[index] === "+") {
+      index += 1;
+      return parseUnary();
+    }
+    return parsePrimary();
+  };
+
+  const parsePrimary = () => {
+    skip();
+    if (text[index] === "(") {
+      index += 1;
+      const value = parseExpression();
+      skip();
+      if (text[index] === ")") index += 1;
+      return value;
+    }
+    const match = /^[0-9]*\.?[0-9]+(e[+-]?[0-9]+)?/i.exec(text.slice(index));
+    if (match) {
+      index += match[0].length;
+      return parseFloat(match[0]);
+    }
+    const name = /^[a-z][a-z0-9]*/i.exec(text.slice(index));
+    if (name) {
+      const key = name[0].toLowerCase();
+      index += name[0].length;
+      if (MATH_CONSTANTS[key] !== undefined) return MATH_CONSTANTS[key];
+      if (MATH_FUNCTIONS[key]) {
+        skip();
+        if (text[index] === "(") index += 1;
+        const argument = parseExpression();
+        skip();
+        if (text[index] === ")") index += 1;
+        return MATH_FUNCTIONS[key](argument);
+      }
+    }
+    throw new Error("cannot parse");
+  };
+
+  const result = parseExpression();
+  skip();
+  if (index !== text.length) throw new Error("trailing input");
+  if (!Number.isFinite(result)) throw new Error("not finite");
+  return result;
+}
+
+// Turn a question into an arithmetic expression, or return null.
+function extractMathExpression(question) {
+  let text = question.toLowerCase();
+
+  // "20 percent" -> "(20/100)" and "15 percent of 200" -> "((15/100) * 200)"
+  text = text.replace(
+    /(\d+(?:\.\d+)?)\s*(?:percent|%)\s+of\s+(\d+(?:\.\d+)?)/g,
+    "(($1/100) * $2)",
+  );
+  text = text.replace(/(\d+(?:\.\d+)?)\s*(?:percent|%)\b/g, "($1/100)");
+
+  const words = [
+    [/\bmultiplied by\b|\btimes\b|\bproduct of\b/g, "*"],
+    [/\bdivided by\b|\bquotient of\b/g, "/"],
+    [/\bplus\b|\bsum of\b|\badded to\b/g, "+"],
+    [/\bminus\b|\bsubtracted from\b|\bdifference between\b/g, "-"],
+    [/\bto the power of\b|\braised to\b/g, "^"],
+    [/\bsine of\b|\bsin of\b/g, "sin("],
+    [/\bcosine of\b|\bcos of\b/g, "cos("],
+    [/\btangent of\b|\btan of\b/g, "tan("],
+    [/\bsquare root of\b|\bsqrt of\b/g, "sqrt("],
+    [/\blogarithm of\b|\blog of\b/g, "log("],
+  ];
+  words.forEach(([pattern, replacement]) => {
+    text = text.replace(pattern, replacement);
+  });
+
+  // Filler words that carry no maths.
+  text = text.replace(
+    /\b(the|of|is|are|what|whats|how|much|calculate|compute|evaluate|work|solve|please|and|find|me|value|result|equals|equal|get)\b/g,
+    " ",
+  );
+
+  text = text
+    .replace(/[×✕]/g, "*")
+    .replace(/[÷]/g, "/")
+    .replace(/[−–—]/g, "-")
+    .replace(/[?=]/g, " ")
+    .replace(/[^0-9a-z+\-*/^%().,\s]/gi, " ")
+    .replace(/\s+/g, " ")
+    .replace(/\(\s+/g, "(")
+    .replace(/\s+\)/g, ")")
+    .trim();
+
+  if (!text) return null;
+  // Only maths characters may survive the filter above.
+  if (!/^[0-9a-z+\-*/^%().,\s]+$/.test(text)) return null;
+  if (!/[0-9]/.test(text)) return null;
+
+  // "the sin of 30" became "sin(30" - close what is missing.
+  const open = (text.match(/\(/g) || []).length;
+  let close = (text.match(/\)/g) || []).length;
+  while (open > close) {
+    text += ")";
+    close += 1;
   }
+  return text;
+}
+
+// A readable answer, in the style of the backend's calculator tool.
+function describeMath(question, expression, value) {
+  const rounded = Number.isInteger(value) ? String(value) : String(Number(value.toFixed(6)));
+  const simple = /^(-?[0-9.]+)\s*([+\-*\/])\s*(-?[0-9.]+)$/.exec(expression);
+  if (simple) {
+    const [, left, op, right] = simple;
+    const names = {
+      "+": ["sum", "and"],
+      "-": ["difference", "and"],
+      "*": ["product", "and"],
+      "/": ["quotient", "and"],
+    };
+    if (names[op]) {
+      return `The ${names[op][0]} of ${left} ${names[op][1]} ${right} is ${rounded}.`;
+    }
+  }
+  if (/^(sin|cos|tan)\(/.test(expression)) {
+    return `${expression} = ${rounded} (degrees).`;
+  }
+  return `${expression} = ${rounded}`;
+}
+
+function demoMath(question) {
+  const expression = extractMathExpression(question);
+  if (!expression) return null;
+  try {
+    const value = evaluateExpression(expression);
+    return { reply: describeMath(question, expression, value), tools: ["calculator"] };
+  } catch {
+    return null;
+  }
+}
+
+function demoReply(q) {
+  const maths = demoMath(q);
+  if (maths) return maths;
   if (/react agent/i.test(q)) {
     return { reply: "A ReAct agent loops: Thought → Action (tool) → Observation, until it can answer. This one has web search + calculator tools on a Gemini model.", tools: [] };
   }
   if (/gemini|news|search/i.test(q)) {
-    return { reply: "Demo mode: connect the backend (uvicorn server:app) to get live DuckDuckGo search + Gemini answers. Your query would run through the ReAct loop.", tools: ["duckduckgo_search"] };
+    return { reply: "Demo mode: connect the backend (uvicorn server:app) to get live web search + Gemini answers. Your query would run through the ReAct loop.", tools: ["duckduckgo_search"] };
   }
   if (/^(hi|hello|hey)\b/i.test(q.trim())) {
     return { reply: "Hello! I'm your AI assistant (demo mode). Ask me a sum like “What is 24 + 58?” or start the backend for full search + Gemini.", tools: [] };
