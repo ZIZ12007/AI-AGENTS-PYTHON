@@ -16,6 +16,8 @@ no API key needed. Connect the backend for live search + LLM answers.
 - Tools: `duckduckgo_search` (live web), `calculator` (local arithmetic)
 - UI shows which tools fired per reply, and reports backend errors instead of hiding them
 - The backend serves the frontend, so the UI talks to the API on its own origin by default
+- Without a backend the page still works: the built-in demo evaluates arithmetic
+  (+ − × ÷, powers, percentages, brackets, sin/cos/tan, roots, logs) in the browser
 
 ## Repo map
 
