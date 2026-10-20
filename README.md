@@ -33,6 +33,7 @@ docs/
   screenshots/desktop.png / mobile.png
   PORTFOLIO.md         # copy-paste portfolio write-up
   LOOM-SCRIPT.md       # 60-second demo script
+DEPLOY.md              # every hosting option (Vercel, Cloud Run, tunnel, ...)
 ```
 
 ## Run it
@@ -138,9 +139,15 @@ cd Project1 && python test_agent.py
 
 ## Deploy a live site (pick one)
 
-**A. Frontend demo on GitHub Pages (free, 2 min)** — Settings → Pages → GitHub Actions, the workflow in `.github/workflows/pages.yml` publishes `Project1/frontend`. No key needed (demo mode).
+See **[DEPLOY.md](./DEPLOY.md)** for the full guide — Vercel (recommended,
+free, no card), a Cloudflare Tunnel for a live URL straight from your PC,
+Google Cloud Run, Render, or the frontend-only GitHub Pages demo.
 
-**B. Full backend on Render (free)** — `render.yaml` included:
+**A. Frontend demo on GitHub Pages (free, 2 min)** — Settings → Pages → GitHub Actions, the workflow in `.github/workflows/pages.yml` publishes `Project1/frontend`. No key needed (demo mode). Point it at a hosted backend by setting one line in `Project1/frontend/config.js`.
+
+**B. Full backend on Vercel (free, no card)** — `vercel.json` is ready. Import the repo, set `GOOGLE_API_KEY`, deploy. The API and the UI share one domain.
+
+**C. Full backend on Render (free)** — `render.yaml` included:
 
 ```bash
 # Render dashboard -> New -> Blueprint -> select this repo
@@ -150,12 +157,7 @@ Set env `GOOGLE_API_KEY`. The backend also serves the frontend, so
 `https://<your-service>.onrender.com/` is a complete app — no extra
 configuration needed.
 
-Only when the frontend is hosted somewhere else (GitHub Pages, Vercel) do you
-point it at the API: open the ⚙ button and set the Backend URL to
-`https://<your-service>.onrender.com` (the `/api/chat` path is added
-automatically).
-
-**C. Vercel (frontend)** — `vercel.json` included:
+**D. Vercel (frontend)** — `vercel.json` included:
 
 ```bash
 npx vercel --prod
