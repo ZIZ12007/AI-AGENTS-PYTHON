@@ -102,8 +102,11 @@ pretending everything is fine.
 | Variable | Required | Purpose |
 | --- | --- | --- |
 | `GOOGLE_API_KEY` | yes | The Gemini key. Without it the API returns `demo: true` |
-| `GEMINI_MODEL` | no | Model id (default `gemini-3.8-flash`) |
+| `GEMINI_MODEL` | no | Model id (default `gemini-3.5-flash`, the fastest measured) |
 | `AGENT_TIMEOUT` | no | Seconds per agent run (default `120`) |
+| `MODEL_ATTEMPT_SECONDS` | no | Seconds one model may take before the next is tried (default `15`) |
+| `SLOW_MODEL_SECONDS` | no | A model slower than this is parked (default `8`) |
+| `CACHE_TTL` | no | How long an answer stays cached (default `3600`) |
 | `PORT` | no | Set by the host |
 
 ## Before you deploy

@@ -11,6 +11,8 @@ demo mode when the backend is unreachable.
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import json
 import logging
 import os
 import sys
@@ -21,7 +23,7 @@ from typing import Any, List
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 from starlette.concurrency import run_in_threadpool
@@ -41,7 +43,11 @@ from agent_core import (  # noqa: E402  (path setup has to run first)
     get_model_name,
     is_model_unavailable_error,
     is_rate_limit_error,
+    model_latencies,
+    order_models,
+    record_model_latency,
     stream_reply,
+    stream_reply_events,
 )
 
 logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"))
@@ -55,6 +61,9 @@ FRONTEND_DIR = BASE_DIR / "frontend"
 # A ReAct turn needs two model calls (decide + answer) and the free Gemini
 # tier regularly takes 15-30s per call, so the budget has to be generous.
 AGENT_TIMEOUT = float(os.getenv("AGENT_TIMEOUT", "120"))
+# How long one model may take before it is written off and the next one is
+# tried. Keeps a single slow model from eating the whole request.
+MODEL_ATTEMPT_SECONDS = float(os.getenv("MODEL_ATTEMPT_SECONDS", "15"))
 MAX_MESSAGE_CHARS = int(os.getenv("MAX_MESSAGE_CHARS", "4000"))
 
 app = FastAPI(title="AI Agent — Minimal Frontend API")
@@ -153,6 +162,7 @@ def health():
         "has_key": bool(get_api_key()),
         "model": get_model_name(),
         "model_chain": get_model_chain(),
+        "model_latency_ms": {k: int(v * 1000) for k, v in model_latencies().items()},
         "tools": ["calculator"] + (["duckduckgo_search"] if search_available else []),
         "search_available": search_available,
         "agent_ready": _agent is not None,
@@ -181,22 +191,51 @@ async def chat(body: ChatIn):
             "demo": True,
         }
 
+    # A repeated question is answered from the cache: no API call, no waiting.
+    cache_key = _cache_key(message, history)
+    cached = cache_get(cache_key)
+    if cached is not None:
+        answer = dict(cached)
+        answer["cached"] = True
+        answer["elapsed_ms"] = 0
+        return answer
+
     started = time.perf_counter()
     deadline = started + AGENT_TIMEOUT
     unavailable: list[str] = []
 
-    for model_name in get_model_chain():
+    # Fastest known models first, slow ones parked at the end.
+    candidates = order_models(get_model_chain())
+
+    for index, model_name in enumerate(candidates):
         remaining = deadline - time.perf_counter()
         if remaining <= 0:
             return _timeout_response()
 
+        # Every model but the last gets a short leash: a model that cannot
+        # answer within it is parked and the next one takes over. The last one
+        # may use whatever is left.
+        last = index == len(candidates) - 1
+        attempt_budget = remaining if last else min(remaining, MODEL_ATTEMPT_SECONDS)
+
+        attempt_started = time.perf_counter()
         try:
             agent = await run_in_threadpool(get_agent, model_name)
             reply, tools_used = await asyncio.wait_for(
                 run_in_threadpool(stream_reply, agent, message, history),
-                timeout=remaining,
+                timeout=attempt_budget,
             )
         except asyncio.TimeoutError:
+            took = time.perf_counter() - attempt_started
+            if not last:
+                log.warning(
+                    "model %s did not answer within %.0fs, trying the next one",
+                    model_name,
+                    attempt_budget,
+                )
+                record_model_latency(model_name, took)
+                unavailable.append(f"{model_name} (too slow)")
+                continue
             log.warning("agent run timed out after %ss", AGENT_TIMEOUT)
             return _timeout_response()
         except MissingAPIKeyError:
@@ -226,13 +265,18 @@ async def chat(body: ChatIn):
                 "error": True,
             }
 
-        return {
+        took = time.perf_counter() - attempt_started
+        record_model_latency(model_name, took)
+        log.info("model %s answered in %.1fs", model_name, took)
+        answer = {
             "reply": reply,
             "tools_used": tools_used,
             "demo": False,
             "model": model_name,
             "elapsed_ms": int((time.perf_counter() - started) * 1000),
         }
+        cache_set(cache_key, answer)
+        return answer
 
     # No model in the chain could answer.
     log.warning("no model available: %s", ", ".join(unavailable))
@@ -262,6 +306,144 @@ def _timeout_response() -> dict:
         "demo": False,
         "error": True,
     }
+
+
+# --------------------------------------------------------------------------- #
+# Answer cache
+# --------------------------------------------------------------------------- #
+# The free tier allows 20 requests per model per day and a ReAct turn costs
+# two of them, so asking the same question again should not spend another
+# one. The cache also makes repeated questions instant.
+_CACHE: dict[str, tuple[float, dict]] = {}
+CACHE_TTL = float(os.getenv("CACHE_TTL", "3600"))
+CACHE_MAX = int(os.getenv("CACHE_MAX", "200"))
+
+
+def _cache_key(message: str, history: list[tuple[str, str]]) -> str:
+    payload = json.dumps([message, history], sort_keys=True, default=str)
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+def cache_get(key: str) -> dict | None:
+    """A cached answer, if it is still fresh."""
+    entry = _CACHE.get(key)
+    if entry is None:
+        return None
+    stored_at, data = entry
+    if time.time() - stored_at > CACHE_TTL:
+        _CACHE.pop(key, None)
+        return None
+    return data
+
+
+def cache_set(key: str, data: dict) -> None:
+    """Remember an answer, evicting the oldest one when the cache is full."""
+    if len(_CACHE) >= CACHE_MAX:
+        oldest = min(_CACHE.items(), key=lambda item: item[1][0])[0]
+        _CACHE.pop(oldest, None)
+    _CACHE[key] = (time.time(), data)
+
+
+# --- streaming endpoint ----------------------------------------------------
+def _sse(event: str, data: dict) -> str:
+    """Format one server-sent event."""
+    return f"event: {event}\ndata: {json.dumps(data)}\n\n"
+
+
+@app.post("/api/chat/stream")
+async def chat_stream(body: ChatIn):
+    """Stream the answer as it is written, so the UI does not sit silent.
+
+    Events: ``delta`` (a piece of the answer), ``done`` (the finished reply
+    with the tools it used) and ``error``.
+    """
+    message = body.message.strip()
+    if not message:
+        raise HTTPException(status_code=400, detail="message must not be empty")
+
+    history = normalise_history(body.history)
+
+    if not get_api_key():
+        async def demo_stream():
+            yield _sse(
+                "done",
+                {
+                    "reply": (
+                        "GOOGLE_API_KEY is missing on the server. Add it to "
+                        "Project1/.env (or set it in the host's environment) "
+                        "and restart the backend."
+                    ),
+                    "tools_used": [],
+                    "demo": True,
+                },
+            )
+
+        return StreamingResponse(demo_stream(), media_type="text/event-stream")
+
+    cache_key = _cache_key(message, history)
+    cached = cache_get(cache_key)
+    if cached is not None:
+        async def cached_stream():
+            yield _sse("delta", {"text": cached["reply"]})
+            yield _sse(
+                "done",
+                {
+                    "reply": cached["reply"],
+                    "tools_used": cached.get("tools_used", []),
+                    "model": cached.get("model"),
+                    "cached": True,
+                    "elapsed_ms": 0,
+                },
+            )
+
+        return StreamingResponse(cached_stream(), media_type="text/event-stream")
+
+    queue: asyncio.Queue = asyncio.Queue()
+    loop = asyncio.get_running_loop()
+
+    def produce() -> None:
+        """Run the agent in a worker thread and push its output into the queue."""
+        try:
+            for kind, *rest in stream_reply_events(agent, message, history):
+                loop.call_soon_threadsafe(queue.put_nowait, (kind, rest))
+        except Exception as exc:  # the client gets an error event
+            loop.call_soon_threadsafe(queue.put_nowait, ("error", [str(exc)]))
+        finally:
+            loop.call_soon_threadsafe(queue.put_nowait, ("end", []))
+
+    async def event_stream():
+        task = asyncio.create_task(asyncio.to_thread(produce))
+        started = time.perf_counter()
+        reply = ""
+        tools: list[str] = []
+        try:
+            while True:
+                kind, payload = await queue.get()
+                if kind == "delta":
+                    reply += payload[0]
+                    yield _sse("delta", {"text": payload[0]})
+                elif kind == "done":
+                    reply, tools = payload[0], payload[1]
+                    yield _sse(
+                        "done",
+                        {
+                            "reply": reply,
+                            "tools_used": tools,
+                            "elapsed_ms": int((time.perf_counter() - started) * 1000),
+                        },
+                    )
+                elif kind == "error":
+                    yield _sse("error", {"message": payload[0]})
+                elif kind == "end":
+                    break
+        finally:
+            await task
+
+    # The agent for the fastest known model is built before the response
+    # starts, so a slow import does not delay the first token.
+    agent = await run_in_threadpool(get_agent, order_models(get_model_chain())[0])
+
+    return StreamingResponse(event_stream(), media_type="text/event-stream")
 
 
 # --- serve the minimal frontend (must come after the API routes) -------------

@@ -93,6 +93,11 @@ function healthUrl() {
   return normaliseChatUrl(backend).replace(/\/api\/chat$/i, "/api/health");
 }
 
+// The streaming route sits next to the plain chat route.
+function chatStreamUrl() {
+  return normaliseChatUrl(backend).replace(/\/api\/chat$/i, "/api/chat/stream");
+}
+
 // --- status + health -------------------------------------------------------
 function setStatus(state, data) {
   const s = STATUS[state] || STATUS.demo;
@@ -249,6 +254,89 @@ function describeError(status, payload) {
   return `The backend returned HTTP ${status}.`;
 }
 
+// Streamed chat: the answer appears while it is written. Falls back to the
+// plain JSON endpoint when the server has no streaming route.
+async function callBackendStreaming(q, onDelta) {
+  const controller = new AbortController();
+  const budgetMs = Math.max(
+    CHAT_TIMEOUT_FLOOR_MS,
+    (serverTimeoutSeconds + CHAT_TIMEOUT_PADDING_S) * 1000,
+  );
+  const timer = setTimeout(() => controller.abort(), budgetMs);
+  try {
+    const response = await fetch(chatStreamUrl(), {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Accept: "text/event-stream" },
+      body: JSON.stringify({
+        message: q,
+        history: history.slice(-MAX_HISTORY_TURNS),
+      }),
+      signal: controller.signal,
+    });
+
+    if (!response.ok) {
+      const payload = await response.json().catch(() => null);
+      return { ok: false, offline: false, message: describeError(response.status, payload) };
+    }
+    if (!response.body) {
+      return { ok: false, offline: false, message: "The backend sent no stream." };
+    }
+
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+    let reply = "";
+    let tools = [];
+
+    const handle = (event, data) => {
+      if (event === "delta") {
+        reply += data.text || "";
+        onDelta(data.text || "");
+      } else if (event === "done") {
+        reply = data.reply || reply;
+        tools = data.tools_used || tools;
+      } else if (event === "error") {
+        throw new Error(data.message || "The agent failed.");
+      }
+    };
+
+    for (;;) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      let split = buffer.indexOf("\n\n");
+      while (split !== -1) {
+        const raw = buffer.slice(0, split);
+        buffer = buffer.slice(split + 2);
+        let event = "message";
+        const dataLines = [];
+        for (const line of raw.split("\n")) {
+          if (line.startsWith("event:")) event = line.slice(6).trim();
+          else if (line.startsWith("data:")) dataLines.push(line.slice(5).trim());
+        }
+        if (dataLines.length) {
+          let parsed = null;
+          try { parsed = JSON.parse(dataLines.join(" ")); } catch { parsed = null; }
+          if (parsed) handle(event, parsed);
+        }
+        split = buffer.indexOf("\n\n");
+      }
+    }
+
+    if (!reply) {
+      return { ok: false, offline: false, message: "The backend sent an empty answer." };
+    }
+    return { ok: true, data: { reply, tools_used: tools } };
+  } catch (err) {
+    if (err instanceof Error && err.message) {
+      return { ok: false, offline: false, message: err.message };
+    }
+    return { ok: false, offline: true, message: "The backend is unreachable." };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 // Returns { ok, offline, message, data }. "offline" means the backend could
 // not be reached at all, which is the only case that justifies a demo reply.
 async function callBackend(q) {
@@ -316,14 +404,41 @@ async function send(text) {
   }
   sendBtn.disabled = true;
   const t = typing();
+  let streamBubble = null;
 
   try {
     if (!demoOnly) {
-      const result = await callBackend(q);
+      // Streamed first: the answer shows up while it is written. If the
+      // server has no stream route, fall back to the plain JSON call.
+      let result = await callBackendStreaming(q, (text) => {
+        if (!streamBubble) {
+          // The first token arrived: swap the typing dots for the answer.
+          t.remove();
+          streamBubble = bubble("agent", "");
+        }
+        streamBubble.textContent += text;
+      });
+      if (!result.ok && /stream|empty answer|no stream/i.test(result.message || "")) {
+        result = await callBackend(q);
+      }
 
       if (result.ok) {
-        t.remove();
-        bubble("agent", result.data.reply || "(empty)", result.data.tools_used || []);
+        if (streamBubble) {
+          streamBubble.textContent = result.data.reply || streamBubble.textContent;
+          if (result.data.tools_used && result.data.tools_used.length) {
+            const meta = document.createElement("span");
+            meta.className = "meta";
+            result.data.tools_used.forEach((name) => {
+              const badge = document.createElement("span");
+              badge.className = "badge";
+              badge.textContent = "⚙ " + name;
+              meta.appendChild(badge);
+            });
+            streamBubble.appendChild(meta);
+          }
+        } else {
+          bubble("agent", result.data.reply || "(empty)", result.data.tools_used || []);
+        }
         recordTurn("user", q);
         recordTurn("assistant", result.data.reply || "");
         if (result.data.error) setStatus("error");
@@ -332,7 +447,6 @@ async function send(text) {
         return;
       }
 
-      t.remove();
       if (!result.offline) {
         // The backend answered with an error: show it instead of faking one.
         bubble("error", result.message);

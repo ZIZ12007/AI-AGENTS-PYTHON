@@ -99,6 +99,46 @@ curl http://localhost:8000/api/health
 | `error` | `true` when the agent failed or timed out |
 | `model` | the model that answered (see the fallback chain below) |
 | `elapsed_ms` | how long the run took |
+| `cached` | `true` when the answer came from the cache (no API call) |
+
+### Streaming
+
+`POST /api/chat/stream` returns the answer as server-sent events, so the UI
+shows the text while it is being written instead of waiting for the whole
+turn:
+
+```
+event: delta
+data: {"text":"The sum of "}
+
+event: delta
+data: {"text":"24 and 58 is 82."}
+
+event: done
+data: {"reply":"The sum of 24 and 58 is 82.","tools_used":["calculator"],"elapsed_ms":2410}
+```
+
+The plain `POST /api/chat` is unchanged and still works.
+
+### Speed
+
+The free Gemini tier is slow and inconsistent, so the server works around it:
+
+- **The fastest model wins.** `gemini-3.5-flash` answers a full ReAct turn
+  (two model calls) in **2.5–4s**; other models on the same key regularly take
+  30–100s. It is the default now.
+- **Measured, not guessed.** The server remembers how long each model took
+  and puts the slow ones at the back of the queue. A model that exceeds
+  `SLOW_MODEL_SECONDS` (default 8) is parked for `SLOW_MODEL_COOLDOWN`
+  seconds (default 10 minutes) instead of being paid for on every request.
+- **A model gets a time limit.** `MODEL_ATTEMPT_SECONDS` (default 15) is how
+  long one model may take before the next one is tried.
+- **No retry storms.** The Google SDK retries a failed request five times
+  with a growing backoff, which turned a quota error into a 36 second wait.
+  Retries are switched off in both the SDK and LangChain, so a quota error
+  surfaces in about two seconds.
+- **Repeat questions are free.** A question that was already answered comes
+  from the cache (`CACHE_TTL`, default one hour) - no API call, no waiting.
 
 ### Model fallback
 
@@ -107,16 +147,16 @@ busy models answer `503 high demand`. So the server keeps a chain of models
 and moves to the next one when the current one is rate limited or overloaded:
 
 ```
-gemini-3.8-flash → gemini-3.7-flash → gemini-3.6-flash → gemini-3.5-flash → gemini-3.1-flash-lite
+gemini-3.5-flash → gemini-3.7-flash → gemini-3.6-flash → gemini-3.1-flash-lite → gemini-3.8-flash
 ```
 
 `GEMINI_MODEL` puts your own model first; the chain is reported by
-`/api/health` as `model_chain`. A quota error fails in about two seconds
-(the SDK's retry storm is disabled) so the fallback is cheap.
+`/api/health` as `model_chain`, and the measured latency per model as
+`model_latency_ms`.
 
-> The free tier is generous enough for a demo but not for real traffic —
-> enable billing in AI Studio, or expect the "no quota left" message after
-> ~20 requests per model per day.
+> The free tier is generous enough for a demo but not for real traffic - a
+> ReAct turn costs two requests, so one model answers about ten questions a
+> day. Enable billing in AI Studio for real traffic.
 
 Offline smoke test (no API key required):
 
@@ -129,8 +169,12 @@ cd Project1 && python test_agent.py
 | Variable | Default | Purpose |
 | --- | --- | --- |
 | `GOOGLE_API_KEY` / `GEMINI_API_KEY` | – | Gemini API key (required for live answers) |
-| `GEMINI_MODEL` | `gemini-3.8-flash` | Model id used by the agent |
+| `GEMINI_MODEL` | `gemini-3.5-flash` | Model id used by the agent |
 | `AGENT_TIMEOUT` | `120` | Seconds a single agent run may take |
+| `MODEL_ATTEMPT_SECONDS` | `15` | Seconds one model may take before the next is tried |
+| `SLOW_MODEL_SECONDS` | `8` | A model slower than this is parked for a while |
+| `SLOW_MODEL_COOLDOWN` | `600` | How long a slow model is parked (seconds) |
+| `CACHE_TTL` | `3600` | How long an answer stays cached (seconds) |
 | `PORT` | `8000` | Port used by `python server.py` |
 
 > The free Gemini tier regularly takes 15–30s per model call, and a ReAct turn

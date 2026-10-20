@@ -156,6 +156,52 @@ def test_agent_factory() -> None:
     check("agent loop used the calculator", "calculator" in tools_used)
 
 
+class StreamingFakeAgent:
+    """Streams an answer token by token, like the real agent does."""
+
+    def __init__(self, text="The sum of 24 and 58 is 82."):
+        self.text = text
+
+    def stream(self, inputs, stream_mode=None):
+        if stream_mode != "messages":
+            yield {"model": {"messages": [AIMessage(content=self.text)]}}
+            return
+        for word in self.text.split(" "):
+            yield (AIMessage(content=word + " "), {})
+
+
+def test_streaming() -> None:
+    """The streaming helper yields deltas and then the finished reply."""
+    from agent_core import stream_reply_events
+
+    events = list(stream_reply_events(StreamingFakeAgent(), "What is 24 + 58?"))
+    kinds = [event[0] for event in events]
+    check("streaming yields deltas", kinds.count("delta") > 1, kinds)
+    check("streaming ends with done", kinds[-1] == "done", kinds)
+
+    reply, tools = events[-1][1], events[-1][2]
+    check("streaming returns the whole reply", reply.strip() == "The sum of 24 and 58 is 82.", reply)
+    check("streaming returns the tools", tools == [], tools)
+
+
+def test_cache() -> None:
+    """A repeated question is answered from the cache without an API call."""
+    import server
+
+    server._CACHE.clear()
+    key = server._cache_key("What is 24 + 58?", [])
+    check("an unknown key is not cached", server.cache_get(key) is None)
+
+    server.cache_set(key, {"reply": "82", "tools_used": ["calculator"]})
+    cached = server.cache_get(key)
+    check("a stored answer comes back", cached is not None and cached["reply"] == "82")
+    check(
+        "the cache key depends on the message",
+        server._cache_key("something else", []) != key,
+    )
+    server._CACHE.clear()
+
+
 def test_api() -> None:
     """POST /api/chat against a stubbed agent (no API key needed)."""
     try:
@@ -307,6 +353,46 @@ def test_history_normalisation() -> None:
     check("history keeps the newest turns", capped[-1][1] == f"turn {MAX_HISTORY_TURNS + 4}")
 
 
+def test_stream_endpoint() -> None:
+    """POST /api/chat/stream returns server-sent events."""
+    try:
+        from fastapi.testclient import TestClient
+    except ImportError:
+        print("[SKIP] stream test (pip install httpx to enable it)")
+        return
+
+    import os
+
+    import server
+
+    os.environ.setdefault("GOOGLE_API_KEY", "test-key")
+    server._agents.clear()
+    server._agents.update(
+        {name: StreamingFakeAgent() for name in server.get_model_chain()}
+    )
+    server._agent = server._agents[server.get_model_name()]
+    try:
+        with TestClient(server.app) as client:
+            with client.stream(
+                "POST", "/api/chat/stream", json={"message": "What is 24 + 58?"}
+            ) as response:
+                body = "".join(response.iter_text())
+                status = response.status_code
+
+        check("the stream endpoint answers", status == 200, status)
+        check("the stream sends deltas", "event: delta" in body, body[:120])
+        check("the stream ends with done", "event: done" in body, body[-160:])
+        check(
+            "the stream carries the full answer",
+            "The sum of 24 and 58 is 82." in body,
+            body[:200],
+        )
+    finally:
+        server._agents.clear()
+        server._agent = None
+        os.environ.pop("GOOGLE_API_KEY", None)
+
+
 if __name__ == "__main__":
     test_calculator()
     test_stream_reply()
@@ -314,5 +400,8 @@ if __name__ == "__main__":
     test_agent_factory()
     test_history_normalisation()
     test_model_fallback()
+    test_streaming()
+    test_cache()
     test_api()
+    test_stream_endpoint()
     print("\nAll checks passed.")

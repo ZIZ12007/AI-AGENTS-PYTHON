@@ -53,14 +53,21 @@ The ⚙ button sets where the API lives. All of these work:
 
 ## API
 
-- `GET /api/health` → `{ ok, has_key, model, tools, search_available, agent_ready, timeout_seconds, max_message_chars, history_turns }`
+- `GET /api/health` → `{ ok, has_key, model, model_chain, model_latency_ms, tools, search_available, agent_ready, timeout_seconds, max_message_chars, history_turns }`
 - `POST /api/chat` body `{ "message": "...", "history": [...] }` →
-  `{ "reply": "...", "tools_used": [...], "demo": false, "elapsed_ms": 913 }`
+  `{ "reply": "...", "tools_used": [...], "demo": false, "model": "...", "elapsed_ms": 913 }`
   (`demo: true` when the server has no API key, `error: true` when the agent failed)
+- `POST /api/chat/stream` — the same request, but the answer arrives as
+  server-sent events (`delta`, `done`) so the text shows while it is written.
+  The UI uses this and falls back to `POST /api/chat` if the stream is not
+  available.
 
 `history` is optional and holds the earlier turns as
 `{ "role": "user" | "assistant", "content": "..." }`. The UI sends the last 12
 turns so follow-up questions keep the context of the conversation.
+
+A question that was already answered comes back from the server's cache with
+`"cached": true` - no API call and no waiting.
 
 The UI only fakes a demo reply when the backend cannot be reached at all. An
 HTTP error (500, 422, …) is shown with the server's own message.
