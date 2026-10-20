@@ -1,8 +1,17 @@
-fastapi>=0.110
-uvicorn>=0.29
+# --- web layer -------------------------------------------------------------
+fastapi>=0.115
+uvicorn>=0.30
 python-dotenv>=1.0
-langchain-community>=0.2
-langchain-core>=0.2
-langchain-google-genai>=2.0
-langgraph>=0.2
-duckduckgo-search>=6.0
+
+# --- agent layer -----------------------------------------------------------
+# langchain v1 provides `langchain.agents.create_agent` (the ReAct loop);
+# langgraph is kept for the `create_react_agent` fallback on older installs.
+langchain>=1.0
+langchain-core>=1.6
+langgraph>=1.0,<2.0
+langchain-google-genai>=4.0
+
+# --- tools -----------------------------------------------------------------
+# `ddgs` is the current DuckDuckGo client (the old `duckduckgo-search` package
+# no longer provides the module the search tool imports).
+ddgs>=9.0

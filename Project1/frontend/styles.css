@@ -21,6 +21,8 @@ body{
 .dot{width:8px; height:8px; border-radius:50%; background:#bbb}
 .dot.live{background:#16a34a}
 .dot.demo{background:#d97706}
+.dot.offline{background:#dc2626}
+.dot.error{background:#dc2626}
 .ghost{background:transparent; border:1px solid var(--line); border-radius:100px; padding:6px 12px; cursor:pointer; color:var(--muted); font-size:13px}
 .ghost:hover{color:var(--ink); border-color:#ccc}
 .settings{background:var(--card); border:1px solid var(--line); border-radius:var(--radius); padding:14px}
@@ -29,6 +31,11 @@ body{
 .hint{font-size:12px; color:var(--muted)}
 .hint code, .foot code{background:#eee; padding:1px 6px; border-radius:6px; font-size:12px}
 .row{display:flex; gap:8px}
+.health{margin:10px 0; display:grid; gap:4px; font-size:12px; color:var(--muted)}
+.health-row{display:flex; justify-content:space-between; gap:12px; border-bottom:1px solid var(--line); padding-bottom:3px}
+.health-key{flex:0 0 auto}
+.health-val{color:var(--ink); text-align:right; word-break:break-all}
+.health-note{margin:0}
 .tools{display:flex; gap:8px; align-items:center; flex-wrap:wrap}
 .tool{font-size:12px; color:var(--muted); border:1px solid var(--line); background:var(--card); padding:5px 11px; border-radius:100px}
 .tool i{font-style:normal; margin-right:4px}
@@ -37,6 +44,7 @@ body{
 .msg{max-width:88%; padding:11px 14px; border-radius:var(--radius); white-space:pre-wrap; word-break:break-word}
 .msg.user{align-self:flex-end; background:var(--accent); color:var(--accent-ink); border-bottom-right-radius:6px}
 .msg.agent{align-self:flex-start; background:var(--card); border:1px solid var(--line); border-bottom-left-radius:6px}
+.msg.error{align-self:flex-start; background:#fef2f2; border:1px solid #fecaca; color:#991b1b; border-bottom-left-radius:6px; font-size:13.5px}
 .msg .meta{display:block; font-size:11px; color:var(--muted); margin-top:8px; border-top:1px solid var(--line); padding-top:6px}
 .msg .badge{display:inline-block; font-size:11px; background:#f1f1f1; border-radius:20px; padding:2px 9px; margin-right:6px}
 .msg.typing{color:var(--muted)}
@@ -50,4 +58,6 @@ body{
 .primary.sm, .ghost.sm{min-height:0; padding:8px 16px; font-size:13px}
 .primary:disabled{opacity:.5}
 .foot{text-align:center; font-size:12px; color:var(--muted); margin:4px 0 0}
+.counter{font-variant-numeric:tabular-nums}
+.counter.warn{color:#b45309}
 @media (max-width:560px){ .msg{max-width:94%} }

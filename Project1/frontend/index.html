@@ -30,11 +30,13 @@
 
   <div id="settings" class="settings" hidden>
     <label>Backend URL
-      <input id="backendUrl" value="http://localhost:8000/api/chat" spellcheck="false" />
+      <input id="backendUrl" value="/api/chat" spellcheck="false" />
     </label>
-    <p class="hint">Start backend with <code>uvicorn server:app --port 8000</code>. If unreachable, the UI runs in local demo mode.</p>
+    <p class="hint">Leave it as <code>/api/chat</code> when the backend serves this page (the default). A base URL such as <code>https://your-service.onrender.com</code> also works — the path is added automatically. Start the backend with <code>uvicorn server:app --port 8000</code>.</p>
+    <div id="healthInfo" class="health"></div>
     <div class="row">
       <button id="saveSettings" class="primary sm" type="button">Save</button>
+      <button id="resetBtn" class="ghost sm" type="button">Reset</button>
       <button id="demoBtn" class="ghost sm" type="button">Use demo only</button>
     </div>
   </div>
@@ -59,9 +61,10 @@
     <input id="input" placeholder="Message the agent…  (Enter to send)" autocomplete="off" />
     <button class="primary" type="submit" id="sendBtn">↑</button>
   </form>
-  <p class="foot">Minimal frontend · connects to <code>Project1/server.py</code> · <span id="modeNote">demo fallback on</span></p>
+  <p class="foot">Minimal frontend · connects to <code>Project1/server.py</code> · <span id="modeNote">demo fallback on</span> · <span id="counter" class="counter"></span></p>
 </div>
 
+<script src="./config.js"></script>
 <script src="./app.js"></script>
 </body>
 </html>
