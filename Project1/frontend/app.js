@@ -47,6 +47,9 @@ let history = [];
 let backendChosen = Boolean(readStored(STORAGE_BACKEND));
 // The model the user picked in the settings ("" = let the server decide).
 let selectedModel = readStored(STORAGE_MODEL) || "";
+// True once a backend answered the health probe. A static host has none, and
+// posting to it would only produce a confusing 404/405.
+let backendPresent = false;
 
 // --- storage (private mode throws, so every access is guarded) -------------
 function readStored(key) {
@@ -217,11 +220,13 @@ async function probeHealth() {
     const data = await res.json();
     if (data.timeout_seconds) serverTimeoutSeconds = Number(data.timeout_seconds);
     fillModelPicker(data.models_available, data.model);
+    backendPresent = true;
     setStatus(data.has_key ? "live" : "nokey", data);
     return data;
   } catch {
     // A static host with no backend configured is a normal state, not an
     // outage - say so instead of showing "backend offline".
+    backendPresent = false;
     setStatus(hasBackend() ? "offline" : "static", null);
     return null;
   } finally {
@@ -326,6 +331,10 @@ async function callBackendStreaming(q, onDelta) {
 
     if (!response.ok) {
       const payload = await response.json().catch(() => null);
+      // 404/405 mean there is no API here at all (a static host).
+      if (response.status === 404 || response.status === 405) {
+        return { ok: false, offline: false, missing: true, message: "no backend" };
+      }
       return { ok: false, offline: false, message: describeError(response.status, payload) };
     }
     if (!response.body) {
@@ -412,6 +421,10 @@ async function callBackend(q) {
     try { payload = await res.json(); } catch { /* not JSON */ }
 
     if (!res.ok) {
+      // 404/405 mean there is no API here at all (a static host).
+      if (res.status === 404 || res.status === 405) {
+        return { ok: false, offline: false, missing: true, message: "no backend" };
+      }
       return { ok: false, offline: false, message: describeError(res.status, payload) };
     }
     if (!payload || typeof payload.reply !== "string") {
@@ -459,58 +472,77 @@ async function send(text) {
 
   try {
     if (!demoOnly) {
-      // Streamed first: the answer shows up while it is written. If the
-      // server has no stream route, fall back to the plain JSON call.
-      let result = await callBackendStreaming(q, (text) => {
-        if (!streamBubble) {
-          // The first token arrived: swap the typing dots for the answer.
-          t.remove();
-          streamBubble = bubble("agent", "");
-        }
-        streamBubble.textContent += text;
-      });
-      if (!result.ok && /stream|empty answer|no stream/i.test(result.message || "")) {
-        result = await callBackend(q);
+      // On a static host there is no API to talk to. Probe once more, then
+      // use the local demo instead of showing a 404/405.
+      if (!backendPresent && !hasBackend()) {
+        await probeHealth();
       }
 
-      if (result.ok) {
-        if (streamBubble) {
-          streamBubble.textContent = result.data.reply || streamBubble.textContent;
-          if (result.data.tools_used && result.data.tools_used.length) {
-            const meta = document.createElement("span");
-            meta.className = "meta";
-            result.data.tools_used.forEach((name) => {
-              const badge = document.createElement("span");
-              badge.className = "badge";
-              badge.textContent = "⚙ " + name;
-              meta.appendChild(badge);
-            });
-            streamBubble.appendChild(meta);
+      if (backendPresent || hasBackend()) {
+        // Streamed first: the answer shows up while it is written. If the
+        // server has no stream route, fall back to the plain JSON call.
+        let result = await callBackendStreaming(q, (text) => {
+          if (!streamBubble) {
+            // The first token arrived: swap the typing dots for the answer.
+            t.remove();
+            streamBubble = bubble("agent", "");
           }
-        } else {
-          bubble("agent", result.data.reply || "(empty)", result.data.tools_used || []);
+          streamBubble.textContent += text;
+        });
+        if (!result.ok && /stream|empty answer|no stream/i.test(result.message || "")) {
+          result = await callBackend(q);
         }
-        recordTurn("user", q);
-        recordTurn("assistant", result.data.reply || "");
-        if (result.data.error) setStatus("error");
-        else if (result.data.demo) setStatus("nokey");
-        else setStatus("live");
-        return;
-      }
 
-      if (!result.offline) {
-        // The backend answered with an error: show it instead of faking one.
-        bubble("error", result.message);
-        setStatus("error");
-        return;
-      }
-      // Backend unreachable: say so, then fall back to the local demo.
-      if (hasBackend()) {
-        bubble("error", `Backend unreachable at ${backend} - showing a local demo answer.`);
-        setStatus("offline");
+        if (result.ok) {
+          if (streamBubble) {
+            streamBubble.textContent = result.data.reply || streamBubble.textContent;
+            if (result.data.tools_used && result.data.tools_used.length) {
+              const meta = document.createElement("span");
+              meta.className = "meta";
+              result.data.tools_used.forEach((name) => {
+                const badge = document.createElement("span");
+                badge.className = "badge";
+                badge.textContent = "⚙ " + name;
+                meta.appendChild(badge);
+              });
+              streamBubble.appendChild(meta);
+            }
+          } else {
+            bubble("agent", result.data.reply || "(empty)", result.data.tools_used || []);
+          }
+          recordTurn("user", q);
+          recordTurn("assistant", result.data.reply || "");
+          if (result.data.error) setStatus("error");
+          else if (result.data.demo) setStatus("nokey");
+          else setStatus("live");
+          return;
+        }
+
+        if (result.missing) {
+          // There is no API on this host - carry on with the local demo.
+          backendPresent = false;
+          t.remove();
+          bubble("error", "No backend is configured - showing a local demo answer.");
+          setStatus("static");
+        } else if (!result.offline) {
+          // The backend answered with an error: show it instead of faking one.
+          t.remove();
+          bubble("error", result.message);
+          setStatus("error");
+          return;
+        } else {
+          // Backend unreachable: say so, then fall back to the local demo.
+          t.remove();
+          if (hasBackend()) {
+            bubble("error", `Backend unreachable at ${backend} - showing a local demo answer.`);
+            setStatus("offline");
+          } else {
+            bubble("error", "No backend is configured - showing a local demo answer.");
+            setStatus("static");
+          }
+        }
       } else {
-        bubble("error", "No backend is configured - showing a local demo answer.");
-        setStatus("static");
+        t.remove();
       }
     } else {
       t.remove();
